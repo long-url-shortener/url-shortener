@@ -1,0 +1,9 @@
+### 단축 URL 생성 요청
+POST http://localhost:8080/shorten
+Content-Type: application/json
+
+{
+  "urlEntity": "https://gorokke.tistory.com/22"
+}
+
+
