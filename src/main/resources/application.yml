@@ -11,6 +11,15 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        jdbc:
+          batch_size: 10000
+
+  batch:
+    # ?????? ?? ? ???? Job ???? ???
+    job:
+      enabled: false
+
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

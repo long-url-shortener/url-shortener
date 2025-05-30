@@ -1,11 +1,13 @@
 package com.urlshortener.controller;
 
+import com.urlshortener.service.GenerateService;
 import com.urlshortener.service.UrlService;
 import com.urlshortener.dto.ShortenRequest;
 import com.urlshortener.dto.ShortenResponse;
 import com.urlshortener.entity.UrlEntity;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -20,13 +22,15 @@ import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.List;
 
-
+@RequiredArgsConstructor
 @RestController
 @Tag(name = "URL 단축 API", description = "단축 URL 생성, 조회, 삭제")
 public class UrlController {
 
-    @Autowired
-    private UrlService urlService;
+
+    private final UrlService urlService;
+    private final GenerateService generateService;
+
 
     @Operation(summary = "단축 URL 생성")
     @PostMapping("/shorten")
@@ -37,7 +41,7 @@ public class UrlController {
 
 
     @Operation(summary = "단축 URL 리디렉션")
-    @GetMapping("/{code:[A-Za-z0-9]{6}}") // 6자리 코드만 허용
+    @GetMapping("/{code:[a-z0-9]{6}}") // 6자리 코드만 허용, 소문자만 쓰기
     public ResponseEntity<?> redirect(@PathVariable String code) {
         UrlEntity urlEntity = urlService.getUrlByShortCode(code);
 
@@ -84,6 +88,12 @@ public class UrlController {
     }
 
 
+    @Operation(summary = "모든 가능한 6자리 코드 생성")
+    @PostMapping("/generate-all")
+    public ResponseEntity<String> generateAll() {
+        generateService.generateAllCodes();
+        return ResponseEntity.accepted().body("생성 작업이 백그라운드에서 시작되었습니다.");
+    }
 
 
 

@@ -3,6 +3,8 @@ package com.urlshortener.service;
 import com.urlshortener.dto.ShortenRequest;
 import com.urlshortener.dto.ShortenResponse;
 import com.urlshortener.entity.UrlEntity;
+import com.urlshortener.exception.UrlErrorCode;
+import com.urlshortener.exception.UrlException;
 import com.urlshortener.repository.UrlRepository;
 import com.urlshortener.util.CodeGenerator;
 import com.urlshortener.util.QRCodeGenerator;
@@ -46,23 +48,27 @@ public class UrlService {
     }
 
 
-
     public UrlEntity getUrlByShortCode(String code) {
-        UrlEntity urlEntity = urlRepository.findByShortCodeAndUseYn(code, "Y")
-                .orElseThrow(() -> new RuntimeException("존재하지 않거나 비활성화된 코드입니다."));
+        UrlEntity urlEntity = urlRepository
+                .findByShortCodeAndUseYn(code, "Y")
+                .orElseThrow(() -> new UrlException(UrlErrorCode.NOT_FOUND));
 
-        if (urlEntity.getExpiredAt() != null && urlEntity.getExpiredAt().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("링크가 만료되었습니다.");
+        // 삭제된(useYn='N') 항목이면 410으로
+        if (!"Y".equals(urlEntity.getUseYn())) {
+            throw new UrlException(UrlErrorCode.DELETED);
+        }
+
+        // 만료일 지나면 410으로
+        if (urlEntity.getExpiredAt() != null
+                && urlEntity.getExpiredAt().isBefore(LocalDateTime.now())) {
+            throw new UrlException(UrlErrorCode.EXPIRED);
         }
 
         urlEntity.increaseClickCount();
         urlRepository.save(urlEntity);
-
         return urlEntity;
     }
 
-
-    // 전체 목록 조회 (예: 관리자 용도)
     public List<UrlEntity> getAllUrls() {
         return urlRepository.findAll();
     }
