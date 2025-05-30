@@ -1,92 +1,136 @@
-//package com.urlshortener.batch;
-//
-//import com.urlshortener.entity.UrlEntity;
-//import org.springframework.batch.core.Job;
-//import org.springframework.batch.core.Step;
-//import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-//import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-//import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-//import org.springframework.batch.item.ItemProcessor;
-//import org.springframework.batch.item.ItemReader;
-//import org.springframework.batch.item.ItemWriter;
-//import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
-//import org.springframework.context.annotation.Bean;
-//import org.springframework.context.annotation.Configuration;
-//
-//import javax.sql.DataSource;
-//import java.time.LocalDateTime;
-//import java.util.stream.LongStream;
-//
-//@Configuration
-//@EnableBatchProcessing
-//public class BatchConfiguration {
-//
-//    private static final long MAX_CODE = (long) Math.pow(36, 6) - 1;
-//    private static final int CHUNK_SIZE = 10_000;
-//
-//    @Bean
-//    public Job generateAllCodesJob(JobBuilderFactory jobs, Step generateStep) {
-//        return jobs.get("generateAllCodesJob")
-//                .start(generateStep)
-//                .build();
-//    }
-//
-//    @Bean
-//    public Step generateStep(StepBuilderFactory steps,
-//                             ItemReader<Long> reader,
-//                             ItemProcessor<Long, UrlEntity> processor,
-//                             ItemWriter<UrlEntity> writer) {
-//        return steps.get("generateStep")
-//                .<Long, UrlEntity>chunk(CHUNK_SIZE)
-//                .reader(reader)
-//                .processor(processor)
-//                .writer(writer)
-//                .build();
-//    }
-//
-//    @Bean
-//    public ItemReader<Long> rangeItemReader() {
-//        return new ItemReader<>() {
-//            private long next = 0;
-//            @Override
-//            public Long read() {
-//                if (next > MAX_CODE) {
-//                    return null;
-//                }
-//                return next++;
-//            }
-//        };
-//    }
-//
-//    @Bean
-//    public ItemProcessor<Long, UrlEntity> urlProcessor() {
-//        return value -> {
-//            // 36진수, 고정 6자리(왼쪽 0 채움)
-//            String code = Long.toString(value, 36);
-//            code = String.format("%6s", code).replace(' ', '0');
-//
-//            UrlEntity entity = new UrlEntity();
-//            entity.setShortCode(code);
-//            entity.setOriginalUrl("");
-//            entity.setCreatedAt(LocalDateTime.now());
-//            entity.setExpiredAt(null);
-//            entity.setUseYn("Y");
-//            entity.setClickCount(0);
-//            return entity;
-//        };
-//    }
-//
-//    @Bean
-//    public ItemWriter<UrlEntity> urlWriter(DataSource dataSource) {
-//        return new JdbcBatchItemWriterBuilder<UrlEntity>()
-//                .dataSource(dataSource)
-//                .beanMapped()
-//                .sql("""
-//                INSERT INTO url_entity
-//                (short_code, original_url, created_at, expired_at, use_yn, click_count)
-//                VALUES
-//                (:shortCode, :originalUrl, :createdAt, :expiredAt, :useYn, :clickCount)
-//                """)
-//                .build();
-//    }
-//}
+package com.urlshortener.batch;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
+
+
+import javax.sql.DataSource;
+
+import jakarta.persistence.EntityManagerFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.repository.support.JobRepositoryFactoryBean;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.item.ItemReader;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.support.AbstractItemStreamItemReader;
+import org.springframework.batch.item.database.JpaItemWriter;
+import org.springframework.batch.core.launch.support.RunIdIncrementer;
+import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.orm.jpa.JpaTransactionManager;
+
+import com.urlshortener.entity.UrlEntity;
+import com.urlshortener.repository.UrlRepository;
+
+@Configuration
+@EnableBatchProcessing
+public class BatchConfiguration {
+
+    private static final Logger logger = LoggerFactory.getLogger(BatchConfiguration.class);
+
+    private static final long TOTAL_CODES = (long) Math.pow(36, 6);
+    private static final int  BATCH_SIZE  = 10_000;
+
+    private final UrlRepository urlRepository;
+    private final DataSource    dataSource;
+    private final EntityManagerFactory emf;
+
+    // 카운터와 시작 시간
+    private final AtomicLong insertedCount = new AtomicLong();
+    private long startTime;
+
+    public BatchConfiguration(UrlRepository urlRepository,
+                              DataSource dataSource,
+                              EntityManagerFactory emf) {
+        this.urlRepository = urlRepository;
+        this.dataSource    = dataSource;
+        this.emf           = emf;
+    }
+
+    @Bean
+    public PlatformTransactionManager transactionManager() {
+        return new JpaTransactionManager(emf);
+    }
+
+    @Bean
+    public JobRepository jobRepository(PlatformTransactionManager txManager) throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(dataSource);
+        factory.setTransactionManager(txManager);
+        factory.afterPropertiesSet();
+        return factory.getObject();
+    }
+
+    @Bean
+    public ItemReader<UrlEntity> urlItemReader() {
+        return new AbstractItemStreamItemReader<>() {
+            private long seq = 0;
+
+            @Override
+            public UrlEntity read() {
+                if (seq == 0) {
+                    startTime = System.currentTimeMillis(); // 첫 호출 시점 기록
+                }
+                if (seq >= TOTAL_CODES) {
+                    return null;
+                }
+                String code = Long.toString(seq, 36);
+                code = String.format("%6s", code).replace(' ', '0');
+                seq++;
+                return new UrlEntity(code, "", LocalDateTime.now(), null, 0);
+            }
+        };
+    }
+
+    @Bean
+    public ItemWriter<UrlEntity> urlItemWriter() {
+        JpaItemWriter<UrlEntity> delegate = new JpaItemWriter<>();
+        delegate.setEntityManagerFactory(emf);
+
+        return items -> {
+            delegate.write(items);
+            long inserted = insertedCount.addAndGet(items.size());
+            long elapsed   = System.currentTimeMillis() - startTime;
+            long remaining = TOTAL_CODES - inserted;
+            double avgMs   = (double) elapsed / inserted;
+            long etaMs     = (long) (avgMs * remaining);
+
+            logger.info("전체 코드: {}건, 저장된 코드: {}건, 남은 코드: {}건, 경과: {}ms, 예상 잔여: {}ms",
+                    TOTAL_CODES, inserted, remaining, elapsed, etaMs);
+        };
+    }
+
+    @Bean
+    public Step generateAllCodesStep(
+            JobRepository jobRepository,
+            PlatformTransactionManager txManager
+    ) {
+        return new StepBuilder("generateAllCodesStep", jobRepository)
+                .<UrlEntity, UrlEntity>chunk(BATCH_SIZE, txManager)
+                .reader(urlItemReader())
+                .writer(urlItemWriter())
+                .build();
+    }
+
+    @Bean
+    public Job generateAllCodesJob(
+            JobRepository jobRepository,
+            Step generateAllCodesStep
+    ) {
+        return new JobBuilder("generateAllCodesJob", jobRepository)
+                .incrementer(new RunIdIncrementer())
+                .start(generateAllCodesStep)
+                .build();
+    }
+}

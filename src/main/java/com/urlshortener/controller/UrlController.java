@@ -1,6 +1,6 @@
 package com.urlshortener.controller;
 
-import com.urlshortener.service.GenerateService;
+
 import com.urlshortener.service.UrlService;
 import com.urlshortener.dto.ShortenRequest;
 import com.urlshortener.dto.ShortenResponse;
@@ -29,7 +29,7 @@ public class UrlController {
 
 
     private final UrlService urlService;
-    private final GenerateService generateService;
+//    private final GenerateService generateService;
 
 
     @Operation(summary = "단축 URL 생성")
@@ -88,12 +88,13 @@ public class UrlController {
     }
 
 
-    @Operation(summary = "모든 가능한 6자리 코드 생성")
-    @PostMapping("/generate-all")
-    public ResponseEntity<String> generateAll() {
-        generateService.generateAllCodes();
-        return ResponseEntity.accepted().body("생성 작업이 백그라운드에서 시작되었습니다.");
-    }
+//    @Operation(summary = "모든 가능한 6자리 코드 생성")
+//    @PostMapping("/generate-all")
+//    public ResponseEntity<String> generateAll() {
+////        generateService.generateAllCodes();
+//        generateService.generateAllCodesParallel();
+//        return ResponseEntity.accepted().body("생성 작업이 백그라운드에서 시작되었습니다.");
+//    }
 
 
 
